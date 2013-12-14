@@ -80,6 +80,9 @@ SnowPlow.Tracker = function Tracker(argmap) {
 		// Document URL
 		configCustomUrl,
 
+        // Page load ID
+        pageLoadID = Math.floor(Math.random() * 2147483647),
+
 		// Document title
 		configTitle = SnowPlow.documentAlias.title,
 
@@ -544,7 +547,7 @@ SnowPlow.Tracker = function Tracker(argmap) {
 			createTs,
 			currentVisitTs,
 			lastVisitTs,
-			referralTs,
+            referralTs,
 			referralUrl,
 			referralUrlMaxLength = 1024,
 			currentReferrerHostName,
@@ -583,6 +586,7 @@ SnowPlow.Tracker = function Tracker(argmap) {
 		sb.addRaw('vp', detectViewport());
 		sb.addRaw('ds', detectDocumentSize());
 		sb.addRaw('vid', visitCount);
+        sb.addRaw('pvid', pageLoadID);
 		sb.addRaw('duid', _domainUserId); // Set to our local variable
 
 		// Encode all these
@@ -693,7 +697,47 @@ SnowPlow.Tracker = function Tracker(argmap) {
 		sb.add('se_va', value);
 		request = getRequest(sb, 'structEvent');
 		sendRequest(request, configTrackerPause);
-	}
+
+        var pageTitle = SnowPlow.fixupTitle(configTitle);
+        var now = new Date();
+        if (configMinimumVisitTime && configHeartBeatTimer && !activityTrackingInstalled) {
+            activityTrackingInstalled = true;
+
+            // Capture our initial scroll points
+            resetMaxScrolls();
+
+            // Add event handlers; cross-browser compatibility here varies significantly
+            // @see http://quirksmode.org/dom/events
+            SnowPlow.addEventListener(SnowPlow.documentAlias, 'click', activityHandler);
+            SnowPlow.addEventListener(SnowPlow.documentAlias, 'mouseup', activityHandler);
+            SnowPlow.addEventListener(SnowPlow.documentAlias, 'mousedown', activityHandler);
+            SnowPlow.addEventListener(SnowPlow.documentAlias, 'mousemove', activityHandler);
+            SnowPlow.addEventListener(SnowPlow.documentAlias, 'mousewheel', activityHandler);
+            SnowPlow.addEventListener(SnowPlow.windowAlias, 'DOMMouseScroll', activityHandler);
+            SnowPlow.addEventListener(SnowPlow.windowAlias, 'scroll', scrollHandler); // Will updateMaxScrolls() for us
+            SnowPlow.addEventListener(SnowPlow.documentAlias, 'keypress', activityHandler);
+            SnowPlow.addEventListener(SnowPlow.documentAlias, 'keydown', activityHandler);
+            SnowPlow.addEventListener(SnowPlow.documentAlias, 'keyup', activityHandler);
+            SnowPlow.addEventListener(SnowPlow.windowAlias, 'resize', activityHandler);
+            SnowPlow.addEventListener(SnowPlow.windowAlias, 'focus', activityHandler);
+            SnowPlow.addEventListener(SnowPlow.windowAlias, 'blur', activityHandler);
+
+            // Periodic check for activity.
+            lastActivityTime = now.getTime();
+            setInterval(function heartBeat() {
+                var now = new Date();
+
+                // There was activity during the heart beat period;
+                // on average, this is going to overstate the visitDuration by configHeartBeatTimer/2
+                if ((lastActivityTime + configHeartBeatTimer) > now.getTime()) {
+                    // Send ping if minimum visit time has elapsed
+                    if (configMinimumVisitTime < now.getTime()) {
+                        logPagePing(pageTitle); // Grab the min/max globals
+                    }
+                }
+            }, configHeartBeatTimer);
+        }
+    }
 
 	/**
 	 * Log an unstructured event happening on this page
