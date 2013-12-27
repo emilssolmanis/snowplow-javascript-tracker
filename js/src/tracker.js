@@ -109,6 +109,8 @@ SnowPlow.Tracker = function Tracker(argmap) {
 
     // Recurring heart beat after initial ping (in milliseconds)
         configHeartBeatTimer,
+        currentHeartBeatTimer,
+        currentHeartBeatTimeoutID,
 
     // Disallow hash tags in URL
         configDiscardHashTag,
@@ -332,10 +334,8 @@ SnowPlow.Tracker = function Tracker(argmap) {
     function sendRequest(request, delay) {
         var now = new Date();
 
-        if (!configDoNotTrack) {
-            getImage(request);
-            SnowPlow.expireDateTime = now.getTime() + delay;
-        }
+        getImage(request);
+        SnowPlow.expireDateTime = now.getTime() + delay;
     }
 
     /*
@@ -411,6 +411,11 @@ SnowPlow.Tracker = function Tracker(argmap) {
     function activityHandler() {
         var now = new Date();
         lastActivityTime = now.getTime();
+        if (currentHeartBeatTimer > configHeartBeatTimer) {
+            clearTimeout(currentHeartBeatTimeoutID);
+            currentHeartBeatTimer = configHeartBeatTimer;
+            setTimeout(heartBeat, configHeartBeatTimer);
+        }
     }
 
     /*
@@ -560,12 +565,6 @@ SnowPlow.Tracker = function Tracker(argmap) {
             currentUrl = configCustomUrl || locationHrefAlias,
             featurePrefix;
 
-        if (configDoNotTrack) {
-            SnowPlow.setCookie(idname, '', -1, configCookiePath, configCookieDomain);
-            SnowPlow.setCookie(sesname, '', -1, configCookiePath, configCookieDomain);
-            return '';
-        }
-
         newVisitor = id[0];
         _domainUserId = id[1]; // We could use the global (domainUserId) but this is better etiquette
         createTs = id[2];
@@ -679,6 +678,24 @@ SnowPlow.Tracker = function Tracker(argmap) {
         }
     }
 
+    function heartBeat() {
+        var now = new Date();
+        var pageTitle = SnowPlow.fixupTitle(configTitle);
+
+        var wasActive = (lastActivityTime + configHeartBeatTimer) > now.getTime();
+
+        if (!wasActive) {
+            currentHeartBeatTimer = Math.min(2 * currentHeartBeatTimer, 600000);
+        }
+
+        // Send ping if minimum visit time has elapsed
+        if (configMinimumVisitTime < now.getTime()) {
+            logPagePing(pageTitle, wasActive); // Grab the min/max globals
+        }
+
+        currentHeartBeatTimeoutID = setTimeout(heartBeat, currentHeartBeatTimer);
+    }
+
     /**
      * Log a structured event happening on this page
      *
@@ -725,16 +742,11 @@ SnowPlow.Tracker = function Tracker(argmap) {
 
             // Periodic check for activity.
             lastActivityTime = now.getTime();
-            setInterval(function heartBeat() {
-                var now = new Date();
 
-                // Send ping if minimum visit time has elapsed
-                if (configMinimumVisitTime < now.getTime()) {
-                    logPagePing(pageTitle); // Grab the min/max globals
-                }
-            }, configHeartBeatTimer);
+            currentHeartBeatTimeoutID = setTimeout(heartBeat, configHeartBeatTimer);
         }
     }
+
     /**
      * Log an unstructured event happening on this page
      *
@@ -753,8 +765,8 @@ SnowPlow.Tracker = function Tracker(argmap) {
             } else {
                 type = SnowPlow.getPropertySuffix(p);
                 if (!type) {
-                    type = 'tms'
-                    key += '$' + type
+                    type = 'tms';
+                    key += '$' + type;
                 }
                 value = SnowPlow.translateDateValue(value, type);
             }
@@ -891,16 +903,10 @@ SnowPlow.Tracker = function Tracker(argmap) {
 
             // Periodic check for activity.
             lastActivityTime = now.getTime();
-            setInterval(function heartBeat() {
-                var now = new Date();
-
-                // Send ping if minimum visit time has elapsed
-                if (configMinimumVisitTime < now.getTime()) {
-                    logPagePing(pageTitle); // Grab the min/max globals
-                }
-            }, configHeartBeatTimer);
+            setTimeout(heartBeat, configHeartBeatTimer);
         }
     }
+
     /*
      * Log that a user is still viewing a given page
      * by sending a page ping.
@@ -909,7 +915,7 @@ SnowPlow.Tracker = function Tracker(argmap) {
      *
      * @param string pageTitle The page title to attach to this page ping
      */
-    function logPagePing(pageTitle) {
+    function logPagePing(pageTitle, wasActive) {
         var sb = requestStringBuilder();
         sb.add('e', 'pp'); // 'pp' for Page Ping
         sb.add('page', pageTitle);
@@ -917,6 +923,7 @@ SnowPlow.Tracker = function Tracker(argmap) {
         sb.addRaw('pp_max', maxXOffset); // Global
         sb.addRaw('pp_miy', minYOffset); // Global
         sb.addRaw('pp_may', maxYOffset); // Global
+        sb.addRaw('pp_act', wasActive ? 1 : 0);
         resetMaxScrolls();
         var request = getRequest(sb, 'pagePing');
         sendRequest(request, configTrackerPause);
@@ -1612,6 +1619,7 @@ SnowPlow.Tracker = function Tracker(argmap) {
 
             configMinimumVisitTime = now.getTime() + minimumVisitLength * 1000;
             configHeartBeatTimer = heartBeatDelay * 1000;
+            currentHeartBeatTimer = configHeartBeatTimer;
         },
 
         /**
