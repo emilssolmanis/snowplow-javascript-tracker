@@ -111,6 +111,7 @@ SnowPlow.Tracker = function Tracker(argmap) {
         configHeartBeatTimer,
         currentHeartBeatTimer,
         currentHeartBeatTimeoutID,
+        pingBumpVersionNumber = false,
 
     // Disallow hash tags in URL
         configDiscardHashTag,
@@ -413,9 +414,18 @@ SnowPlow.Tracker = function Tracker(argmap) {
         lastActivityTime = now.getTime();
         if (currentHeartBeatTimer > configHeartBeatTimer) {
             clearTimeout(currentHeartBeatTimeoutID);
+
+            var ses = getCookieValue('ses');
+            if (!ses) {
+                pingBumpVersionNumber = true;
+            }
+
             currentHeartBeatTimer = configHeartBeatTimer;
             setTimeout(heartBeat, configHeartBeatTimer);
         }
+
+        var sesname = getCookieName('ses'); // NOT sesname
+        SnowPlow.setCookie(sesname, '*', configSessionCookieTimeout, configCookiePath, configCookieDomain);
     }
 
     /*
@@ -535,6 +545,10 @@ SnowPlow.Tracker = function Tracker(argmap) {
         return nowTs;
     }
 
+    function getRequest(sb, pluginMethod) {
+        getRequest(sb, pluginMethod, false);
+    }
+
     /*
      * Attaches all the common web fields to the request
      * (resolution, url, referrer, etc.)
@@ -543,7 +557,7 @@ SnowPlow.Tracker = function Tracker(argmap) {
      * Takes in a string builder, adds in parameters to it
      * and then generates the request.
      */
-    function getRequest(sb, pluginMethod) {
+    function getRequest(sb, pluginMethod, setSessionCookie) {
         var i,
             now = new Date(),
             nowTs = Math.round(now.getTime() / 1000),
@@ -559,7 +573,6 @@ SnowPlow.Tracker = function Tracker(argmap) {
             currentReferrerHostName,
             originalReferrerHostName,
             idname = getCookieName('id'),
-            sesname = getCookieName('ses'), // NOT sesname
             id = loadDomainUserIdCookie(),
             ses = getCookieValue('ses'),
             currentUrl = configCustomUrl || locationHrefAlias,
@@ -573,7 +586,11 @@ SnowPlow.Tracker = function Tracker(argmap) {
         lastVisitTs = id[5];
 
         // New session
-        if (!ses) {
+        // but timed-out pings should not bump the session count. They're just zombie beacons
+        if ((!ses && pluginMethod !== 'pagePing') || pingBumpVersionNumber) {
+            if (pingBumpVersionNumber) {
+                pingBumpVersionNumber = false;
+            }
             // New session (aka new visit)
             visitCount++;
             // Update the last visit timestamp
@@ -616,7 +633,11 @@ SnowPlow.Tracker = function Tracker(argmap) {
 
         // Update cookies
         setDomainUserIdCookie(_domainUserId, createTs, visitCount, nowTs, lastVisitTs);
-        SnowPlow.setCookie(sesname, '*', configSessionCookieTimeout, configCookiePath, configCookieDomain);
+
+        if (setSessionCookie) {
+            var sesname = getCookieName('ses'); // NOT sesname
+            SnowPlow.setCookie(sesname, '*', configSessionCookieTimeout, configCookiePath, configCookieDomain);
+        }
 
         // Tracker plugin hook
         // TODO: we can blow this away for SnowPlow
@@ -709,11 +730,11 @@ SnowPlow.Tracker = function Tracker(argmap) {
         var sb = requestStringBuilder();
         sb.add('e', 'se'); // 'se' for Structured Event
         sb.add('se_ca', category);
-        sb.add('se_ac', action)
+        sb.add('se_ac', action);
         sb.add('se_la', label);
         sb.add('se_pr', property);
         sb.add('se_va', value);
-        request = getRequest(sb, 'structEvent');
+        var request = getRequest(sb, 'structEvent', true);
         sendRequest(request, configTrackerPause);
 
         var pageTitle = SnowPlow.fixupTitle(configTitle);
